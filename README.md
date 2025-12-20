@@ -87,6 +87,58 @@ Low-level Cypher access for complex queries:
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    Agent["🤖 Agent"]
+
+    subgraph Gateway["Gateway Tools"]
+        direction TB
+        Ground["ground_entity<br/><i>NL → CURIE</i>"]
+        Suggest["suggest_endpoints<br/><i>navigation hints</i>"]
+        Call["call_endpoint<br/><i>190+ functions</i>"]
+        NavSchema["get_navigation_schema<br/><i>edge map</i>"]
+    end
+
+    subgraph Core["Query Infrastructure"]
+        direction TB
+        Schema["get_graph_schema<br/><i>progressive discovery</i>"]
+        Execute["execute_cypher<br/><i>arbitrary queries</i>"]
+        Validate["validate_cypher<br/><i>safety checks</i>"]
+        Enrich["enrich_results<br/><i>metadata layers</i>"]
+    end
+
+    subgraph Data["Data Layer"]
+        direction TB
+        Neo[("Neo4j<br/>20M nodes")]
+        GILDA["GILDA API"]
+    end
+
+    Agent -->|"ground terms"| Ground
+    Agent -->|"explore edges"| Suggest
+    Agent -->|"call functions"| Call
+    Agent -->|"discover schema"| Schema
+    Agent -->|"run Cypher"| Execute
+
+    Ground --> GILDA
+    Suggest --> Call
+    Call --> Neo
+    NavSchema --> Call
+
+    Schema --> Neo
+    Execute --> Validate
+    Validate --> Neo
+
+    classDef agent fill:#2C3E50,stroke:#1A252F,stroke-width:3px,color:#ECF0F1,font-weight:bold
+    classDef gateway fill:#9B59B6,stroke:#8E44AD,stroke-width:2px,color:#FFFFFF
+    classDef core fill:#3498DB,stroke:#2980B9,stroke-width:2px,color:#FFFFFF
+    classDef data fill:#7F8C8D,stroke:#5D6D7E,stroke-width:2px,color:#ECF0F1
+
+    class Agent agent
+    class Ground,Suggest,Call,NavSchema gateway
+    class Schema,Execute,Validate,Enrich core
+    class Neo,GILDA data
+```
+
 Most agents use Gateway Tools—ground natural language to CURIEs, then call pre-built functions. When predefined functions cannot express the query (graph algorithms, multi-hop traversals, conditional aggregations), agents drop down to Query Infrastructure: discover schema, execute Cypher with validation, enrich results.
 
 ### Context-Aware Grounding
