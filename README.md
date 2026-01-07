@@ -7,7 +7,7 @@ Enables AI agents to explore biomedical knowledge through the Model Context Prot
 ## Installation
 
 ```bash
-pip install indra_agent
+pip install git+https://github.com/gyorilab/indra_agent.git
 ```
 
 Or from source:
