@@ -14,9 +14,11 @@ Architecture:
 import asyncio
 import json
 import logging
+import os
 import threading
 from typing import Any, Dict, List, Optional
 
+import click
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -307,9 +309,82 @@ def _register_gateway_tools():
 _register_gateway_tools()
 
 
-def main():
-    """Entry point for the MCP server."""
-    mcp.run()
+@click.command()
+@click.option(
+    "--http",
+    is_flag=True,
+    default=False,
+    help="Run server in HTTP streamable transport mode (for network access). "
+         "Default is stdio transport mode (for local clients)."
+)
+@click.option(
+    "--host",
+    default=None,
+    help="Host to bind to when using HTTP transport. "
+         "Defaults to 0.0.0.0 (all interfaces) or from MCP_HOST environment variable."
+)
+@click.option(
+    "--port",
+    type=int,
+    default=None,
+    help="Port to bind to when using HTTP transport. "
+         "Defaults to 8000 or from MCP_PORT environment variable."
+)
+@click.option(
+    "--stateless/--stateful",
+    default=True,
+    help="Use stateless HTTP mode (default: True). "
+         "Stateless mode is recommended for easier scaling. "
+         "Use --stateful to enable stateful mode."
+)
+@click.option(
+    "--json-response/--streaming",
+    default=True,
+    help="Use JSON response mode instead of streaming (default: True). "
+         "Simpler for most use cases. Use --streaming to enable SSE streaming."
+)
+def main(http: bool, host: Optional[str], port: Optional[int], stateless: bool, json_response: bool):
+    """INDRA CoGEx MCP Server.
+
+    Run the MCP server in either stdio mode (default, for local clients) or
+    HTTP streamable transport mode (for network access).
+
+    Examples:
+
+    \b
+    # Run in stdio mode (default, for Claude Desktop, Cursor, etc.)
+    indra-agent
+
+    \b
+    # Run in HTTP mode for network access
+    indra-agent --http
+
+    \b
+    # Run in HTTP mode with custom host/port
+    indra-agent --http --host 0.0.0.0 --port 8000
+    """
+    if http:
+        # HTTP streamable transport mode for network access
+        http_host = host or os.getenv("MCP_HOST", "0.0.0.0")
+        http_port = port or int(os.getenv("MCP_PORT", "8000"))
+
+        logger.info(
+            f"Starting MCP server in HTTP streamable transport mode on {http_host}:{http_port}"
+        )
+        logger.info(f"Stateless mode: {stateless}, JSON response: {json_response}")
+
+        # Update FastMCP settings before running
+        # These settings must be set at initialization, so we update the settings object
+        mcp.settings.host = http_host
+        mcp.settings.port = http_port
+        mcp.settings.stateless_http = stateless
+        mcp.settings.json_response = json_response
+
+        mcp.run(transport="streamable-http")
+    else:
+        # Default stdio transport mode for local clients
+        logger.info("Starting MCP server in stdio transport mode")
+        mcp.run()
 
 
 __all__ = ['mcp', 'get_client', 'main']

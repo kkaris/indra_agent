@@ -30,6 +30,7 @@ dependencies = [
     "mcp>=1.2.0",
     "gilda",
     "pydantic>=2.0",
+    "click>=8.0",
 ]
 
 [project.optional-dependencies]
