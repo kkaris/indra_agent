@@ -431,12 +431,26 @@ def main(http: bool, host: Optional[str], port: Optional[int], stateless: bool, 
                     path = scope.get("path", "")
                     method = scope.get("method", "")
                     
-                    # Intercept GET /mcp for landing page
+                    # Check if this is an SSE request (MCP protocol) or browser request
                     if path == "/mcp" and method == "GET":
-                        from starlette.requests import Request
-                        request = Request(scope, receive)
-                        response = await self.landing_handler(request)
-                        await response(scope, receive, send)
+                        # Check Accept header for SSE requests
+                        # In ASGI, headers are a list of [name, value] tuples (both bytes)
+                        accept_header = b""
+                        for name, value in scope.get("headers", []):
+                            if name.lower() == b"accept":
+                                accept_header = value
+                                break
+                        accept_header_str = accept_header.decode("utf-8", errors="ignore").lower()
+                        
+                        # If client wants SSE (text/event-stream), forward to MCP app
+                        if "text/event-stream" in accept_header_str:
+                            await self.mcp_app(scope, receive, send)
+                        else:
+                            # Browser request - serve landing page
+                            from starlette.requests import Request
+                            request = Request(scope, receive)
+                            response = await self.landing_handler(request)
+                            await response(scope, receive, send)
                     else:
                         # Forward all other requests to MCP app
                         await self.mcp_app(scope, receive, send)
