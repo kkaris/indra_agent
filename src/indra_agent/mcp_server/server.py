@@ -12,19 +12,18 @@ Architecture:
     - get_navigation_schema: Full edge map for discovery
 """
 import asyncio
-import contextlib
 import json
 import logging
 import os
 import threading
 from typing import Any, Dict, List, Optional
 
-import click
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field, ConfigDict
-from starlette.applications import Starlette
-from starlette.routing import Mount, Route
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 from starlette.templating import Jinja2Templates
 
 from indra_cogex.client.neo4j_client import Neo4jClient
@@ -37,7 +36,6 @@ from indra_agent.mcp_server.validation import validate_cypher
 logger = logging.getLogger(__name__)
 
 # Read allowed hosts and origins from environment variables
-# Defaults to discovery.indra.bio if not set
 _allowed_hosts_env = get_config("MCP_ALLOWED_HOSTS", failure_ok=False)
 _allowed_origins_env = get_config("MCP_ALLOWED_ORIGINS", failure_ok=False)
 
@@ -45,9 +43,16 @@ _allowed_origins_env = get_config("MCP_ALLOWED_ORIGINS", failure_ok=False)
 _allowed_hosts = [h.strip() for h in _allowed_hosts_env.split(",") if h.strip()]
 _allowed_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()]
 
-# Initialize MCP server
+# Parse stateless mode from environment (default: True for production)
+_stateless = os.getenv("MCP_STATELESS", "true").lower() in ("true", "t", "1", "yes", "on")
+
+# Parse JSON response mode from environment (default: True)
+_json_response = os.getenv("MCP_JSON_RESPONSE", "true").lower() in ("true", "t", "1", "yes", "on")
+
+# Initialize MCP server with stateless mode for horizontal scaling
 mcp = FastMCP(
     "indra_cogex",
+    stateless_http=_stateless,
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=_allowed_hosts,
@@ -79,15 +84,54 @@ def get_client() -> Neo4jClient:
 
 
 # ============================================================================
-# Landing Page Handler
+# Custom Routes
 # ============================================================================
 
-async def landing_page_handler(request):
-    """Handle GET requests to /mcp with HTML landing page."""
+@mcp.custom_route("/", methods=["GET"])
+async def landing_page(request):
+    """Serve HTML landing page at root path."""
     return templates.TemplateResponse(
         "landing_page.html",
         {"request": request, "server_name": mcp.name}
     )
+
+
+@mcp.custom_route("/mcp", methods=["GET"])
+async def mcp_landing_page(request):
+    """Handle GET requests to /mcp endpoint.
+
+    When deployed behind CloudFront at mydomain.com/mcp, this handler:
+    - Serves HTML landing page for browser GET requests (Accept: text/html)
+    - Returns JSON info/health response for API client GET requests
+    - POST requests to /mcp are handled by FastMCP's MCP protocol endpoint
+    """
+    accept_header = request.headers.get("accept", "").lower()
+    is_browser_request = "text/html" in accept_header or not accept_header
+
+    if is_browser_request:
+        # Serve landing page for browser GET requests
+        return templates.TemplateResponse(
+            "landing_page.html",
+            {"request": request, "server_name": mcp.name}
+        )
+    else:
+        # For API clients, health checks, or other non-browser GET requests
+        # Return a helpful JSON response
+        return JSONResponse({
+            "service": "indra_cogex",
+            "status": "healthy",
+            "endpoint": "/mcp",
+            "protocol": "MCP (Model Context Protocol)",
+            "transport": "HTTP POST",
+            "message": "This endpoint accepts MCP protocol messages via POST requests. "
+                      "For HTML documentation, send a GET request with Accept: text/html header."
+        })
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request):
+    """Health check endpoint for monitoring."""
+    return JSONResponse({"status": "healthy", "service": "indra_cogex"})
 
 
 # ============================================================================
@@ -347,146 +391,67 @@ def _register_gateway_tools():
 _register_gateway_tools()
 
 
-@click.command()
-@click.option(
-    "--http",
-    is_flag=True,
-    default=False,
-    help="Run server in HTTP streamable transport mode (for network access). "
-         "Default is stdio transport mode (for local clients)."
-)
-@click.option(
-    "--host",
-    default=None,
-    help="Host to bind to when using HTTP transport. "
-         "Defaults to 0.0.0.0 (all interfaces) or from MCP_HOST environment variable."
-)
-@click.option(
-    "--port",
-    type=int,
-    default=None,
-    help="Port to bind to when using HTTP transport. "
-         "Defaults to 8000 or from MCP_PORT environment variable."
-)
-@click.option(
-    "--stateless/--stateful",
-    default=True,
-    help="Use stateless HTTP mode (default: True). "
-         "Stateless mode is recommended for easier scaling. "
-         "Use --stateful to enable stateful mode."
-)
-@click.option(
-    "--json-response/--streaming",
-    default=True,
-    help="Use JSON response mode instead of streaming (default: True). "
-         "Simpler for most use cases. Use --streaming to enable SSE streaming."
-)
-def main(http: bool, host: Optional[str], port: Optional[int], stateless: bool, json_response: bool):
-    """INDRA CoGEx MCP Server.
+# ============================================================================
+# ASGI App for Gunicorn/Uvicorn
+# ============================================================================
+# Note: This is an ASGI application. When using gunicorn, you must use
+# the uvicorn worker class:
+#   gunicorn indra_agent.mcp_server.server:app --worker-class uvicorn.workers.UvicornWorker
+#
+# Or use uvicorn directly:
+#   uvicorn indra_agent.mcp_server.server:app --host 0.0.0.0 --port 8000
+# ============================================================================
 
-    Run the MCP server in either stdio mode (default, for local clients) or
-    HTTP streamable transport mode (for network access).
+# Configure JSON response mode
+mcp.settings.json_response = _json_response
 
-    Examples:
+# Create base ASGI app using FastMCP's built-in streamable_http_app() method
+# This is the recommended approach per FastMCP documentation
+_base_app = mcp.streamable_http_app()
 
-    \b
-    # Run in stdio mode (default, for Claude Desktop, Cursor, etc.)
-    indra-agent
 
-    \b
-    # Run in HTTP mode for network access
-    indra-agent --http
+# ============================================================================
+# Middleware to handle GET requests to /mcp endpoint
+# ============================================================================
 
-    \b
-    # Run in HTTP mode with custom host/port
-    indra-agent --http --host 0.0.0.0 --port 8000
+class MCPLandingPageMiddleware(BaseHTTPMiddleware):
+    """Middleware to intercept GET requests to /mcp and serve landing page.
+
+    This ensures GET requests to /mcp are handled before FastMCP's route,
+    allowing us to serve the landing page for browsers while letting POST
+    requests pass through to FastMCP's MCP protocol handler.
     """
-    if http:
-        # HTTP streamable transport mode for network access
-        http_host = host or os.getenv("MCP_HOST", "0.0.0.0")
-        http_port = port or int(os.getenv("MCP_PORT", "8000"))
 
-        logger.info(
-            f"Starting MCP server in HTTP streamable transport mode on {http_host}:{http_port}"
-        )
-        logger.info(f"Stateless mode: {stateless}, JSON response: {json_response}")
+    async def dispatch(self, request: Request, call_next):
+        # Intercept GET requests to /mcp
+        if request.method == "GET" and request.url.path == "/mcp":
+            accept_header = request.headers.get("accept", "").lower()
+            is_browser_request = "text/html" in accept_header or not accept_header
 
-        # Update FastMCP settings before running
-        mcp.settings.host = http_host
-        mcp.settings.port = http_port
-        mcp.settings.stateless_http = stateless
-        mcp.settings.json_response = json_response
+            if is_browser_request:
+                # Serve landing page for browser GET requests
+                return templates.TemplateResponse(
+                    "landing_page.html",
+                    {"request": request, "server_name": mcp.name}
+                )
+            else:
+                # For API clients, health checks, or other non-browser GET requests
+                # Return a helpful JSON response
+                return JSONResponse({
+                    "service": "indra_cogex",
+                    "status": "healthy",
+                    "endpoint": "/mcp",
+                    "protocol": "MCP (Model Context Protocol)",
+                    "transport": "HTTP POST",
+                    "message": "This endpoint accepts MCP protocol messages via POST requests. "
+                              "For HTML documentation, send a GET request with Accept: text/html header."
+                })
 
-        # Create Starlette app with landing page and MCP server
-        @contextlib.asynccontextmanager
-        async def lifespan(app: Starlette):
-            """Manage MCP session manager lifecycle."""
-            async with mcp.session_manager.run():
-                yield
-
-        # Get the MCP server's ASGI app (handles routes at /mcp by default)
-        # Note: stateless_http and json_response are already set via mcp.settings above
-        mcp_app = mcp.streamable_http_app()
-
-        # Create Starlette app for lifespan management
-        starlette_app = Starlette(routes=[], lifespan=lifespan)
-        
-        # Create ASGI wrapper that intercepts GET /mcp and forwards rest to MCP app
-        class CombinedASGIApp:
-            """ASGI app that serves landing page for GET /mcp, forwards rest to MCP app."""
-            
-            def __init__(self, mcp_app, landing_handler, starlette_app):
-                self.mcp_app = mcp_app
-                self.landing_handler = landing_handler
-                self.starlette_app = starlette_app
-            
-            async def __call__(self, scope, receive, send):
-                if scope["type"] == "lifespan":
-                    # Use Starlette's lifespan handling
-                    await self.starlette_app(scope, receive, send)
-                elif scope["type"] == "http":
-                    path = scope.get("path", "")
-                    method = scope.get("method", "")
-                    
-                    # Check if this is an SSE request (MCP protocol) or browser request
-                    if path == "/mcp" and method == "GET":
-                        # Check Accept header for SSE requests
-                        # In ASGI, headers are a list of [name, value] tuples (both bytes)
-                        accept_header = b""
-                        for name, value in scope.get("headers", []):
-                            if name.lower() == b"accept":
-                                accept_header = value
-                                break
-                        accept_header_str = accept_header.decode("utf-8", errors="ignore").lower()
-                        
-                        # If client wants SSE (text/event-stream), forward to MCP app
-                        if "text/event-stream" in accept_header_str:
-                            await self.mcp_app(scope, receive, send)
-                        else:
-                            # Browser request - serve landing page
-                            from starlette.requests import Request
-                            request = Request(scope, receive)
-                            response = await self.landing_handler(request)
-                            await response(scope, receive, send)
-                    else:
-                        # Forward all other requests to MCP app
-                        await self.mcp_app(scope, receive, send)
-                else:
-                    await self.mcp_app(scope, receive, send)
-        
-        app = CombinedASGIApp(mcp_app, landing_page_handler, starlette_app)
-
-        # Run with uvicorn
-        try:
-            import uvicorn
-            uvicorn.run(app, host=http_host, port=http_port, log_level="info")
-        except ImportError:
-            logger.error("uvicorn is required for HTTP mode. Install it with: pip install uvicorn")
-            raise
-    else:
-        # Default stdio transport mode for local clients
-        logger.info("Starting MCP server in stdio transport mode")
-        mcp.run()
+        # For all other requests, pass through to the underlying app
+        return await call_next(request)
 
 
-__all__ = ['mcp', 'get_client', 'main']
+# Wrap the base app with middleware to handle /mcp GET requests
+app = MCPLandingPageMiddleware(_base_app)
+
+__all__ = ['mcp', 'get_client', 'app']
