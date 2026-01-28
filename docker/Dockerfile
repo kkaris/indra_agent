@@ -20,7 +20,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir git+https://github.com/gyorilab/indra_agent.git@deploy
+    pip install --no-cache-dir git+https://github.com/gyorilab/indra_agent.git
 
 # Setup resources
 RUN python -m protmapper.resources && \
