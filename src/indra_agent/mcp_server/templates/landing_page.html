@@ -115,99 +115,65 @@
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>{{ server_name }}</h1>
-        <p class="subtitle">Model Context Protocol (MCP) Server</p>
-        
-        <div class="status">✓ Server is running</div>
-        
-        <div class="info-section">
-            <h2>About</h2>
-            <p>This is an MCP server providing access to the INDRA CoGEx knowledge graph. 
-            The server exposes tools, resources, and prompts for querying and navigating 
+<div class="container">
+    <h1>{{ server_name }}</h1>
+    <p class="subtitle">Model Context Protocol (MCP) Server</p>
+
+    <div class="status">✓ Server is running</div>
+
+    <div class="info-section">
+        <h2>About</h2>
+        <p>This is an MCP server providing access to the INDRA CoGEx knowledge graph.
+            The server exposes tools, resources, and prompts for querying and navigating
             biomedical knowledge graphs.</p>
-        </div>
-        
-        <div class="info-section">
-            <h2>Endpoint</h2>
-            <p>MCP clients should connect to this endpoint:</p>
-            <div class="endpoint">POST /mcp</div>
-            <p>This endpoint accepts MCP protocol messages via POST requests.</p>
-        </div>
-        
-        <div class="info-section">
-            <h2>Features</h2>
-            <ul>
-                <li><strong>Schema Discovery:</strong> Explore graph structure and entity types</li>
-                <li><strong>Query Execution:</strong> Execute Cypher queries on the knowledge graph</li>
-                <li><strong>Query Validation:</strong> Validate queries before execution</li>
-                <li><strong>Result Enrichment:</strong> Add metadata to query results</li>
-                <li><strong>Graph Navigation:</strong> Navigate the knowledge graph using gateway tools</li>
-            </ul>
-        </div>
-        
-        <div class="info-section">
-            <h2>Transport</h2>
-            <p>This server uses the <strong>Streamable HTTP</strong> transport mode, 
+    </div>
+
+    <div class="info-section">
+        <h2>Endpoint</h2>
+        <p>MCP clients should connect to this endpoint:</p>
+        <div class="endpoint">POST /mcp</div>
+        <p>This endpoint accepts MCP protocol messages via POST requests.</p>
+    </div>
+
+    <div class="info-section">
+        <h2>Features</h2>
+        <ul>
+            <li><strong>Schema Discovery:</strong> Explore graph structure and entity
+                types
+            </li>
+            <li><strong>Query Execution:</strong> Execute Cypher queries on the knowledge
+                graph
+            </li>
+            <li><strong>Query Validation:</strong> Validate queries before execution</li>
+            <li><strong>Result Enrichment:</strong> Add metadata to query results</li>
+            <li><strong>Graph Navigation:</strong> Navigate the knowledge graph using
+                gateway tools
+            </li>
+        </ul>
+    </div>
+
+    <div class="info-section">
+        <h2>Transport</h2>
+        <p>This server uses the <strong>Streamable HTTP</strong> transport mode,
             which supports both stateless and stateful operation.</p>
-        </div>
-        
-        <div class="info-section">
-            <h2>How to Connect</h2>
-            <p>Configure your MCP client to connect to this server. Examples for popular clients:</p>
-            
-            <div class="client-name">Cursor</div>
-            <p>Add this configuration to your <code>.cursor/mcp.json</code> or <code>~/.cursor/mcp.json</code>:</p>
-            <div class="code-block">{
-  "mcpServers": {
-    "indra-cogex": {
-      "command": "python",
-      "args": ["-m", "indra_agent.mcp_server", "--http", "--port", "8778", "--json-response", "--stateless"],
-      "env": {
-        "INDRA_NEO4J_URL": "${env:INDRA_NEO4J_URL}",
-        "INDRA_NEO4J_USER": "${env:INDRA_NEO4J_USER}",
-        "INDRA_NEO4J_PASSWORD": "${env:INDRA_NEO4J_PASSWORD}"
-      }
-    }
-  }
-}</div>
-            <p><strong>Note:</strong> For HTTP mode, use a remote server configuration instead:</p>
-            <div class="code-block">{
-  "mcpServers": {
-    "indra-cogex": {
-      "url": "http://localhost:8778/mcp"
-    }
-  }
-}</div>
-            
-            <div class="client-name">Claude Code</div>
-            <p>Add this configuration to your plugin's <code>.mcp.json</code> or inline in <code>plugin.json</code>:</p>
-            <div class="code-block">{
-  "mcpServers": {
-    "indra-cogex": {
-      "command": "python",
-      "args": ["-m", "indra_agent.mcp_server", "--http", "--port", "8778", "--json-response", "--stateless"],
-      "env": {
-        "INDRA_NEO4J_URL": "${env:INDRA_NEO4J_URL}",
-        "INDRA_NEO4J_USER": "${env:INDRA_NEO4J_USER}",
-        "INDRA_NEO4J_PASSWORD": "${env:INDRA_NEO4J_PASSWORD}"
-      }
-    }
-  }
-}</div>
-            <p><strong>Note:</strong> For HTTP mode, use a remote server configuration:</p>
-            <div class="code-block">{
-  "mcpServers": {
-    "indra-cogex": {
-      "url": "http://localhost:8778/mcp"
-    }
-  }
-}</div>
-        </div>
-        
-        <div class="footer">
-            <p>INDRA CoGEx MCP Server | Model Context Protocol</p>
+    </div>
+
+    <div class="info-section">
+        <h2>How to Connect</h2>
+        <p>Configure your MCP client to connect to this server:</p>
+        <div class="code-block">{
+            "mcpServers": {
+                "indra-cogex": {
+                    "url": "https://discovery.indra.bio/mcp"
+                }
+            }
+        }
         </div>
     </div>
+
+    <div class="footer">
+        <p>INDRA CoGEx MCP Server | Model Context Protocol</p>
+    </div>
+</div>
 </body>
 </html>
