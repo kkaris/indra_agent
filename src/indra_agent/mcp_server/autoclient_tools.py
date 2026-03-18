@@ -502,7 +502,7 @@ async def call_endpoint(
         # Check cache first (same endpoint + kwargs = cache hit)
         result_id = make_key("endpoint", endpoint, parsed_kwargs)
         try:
-            cached = await asyncio.to_thread(_cache.get, result_id)
+            cached = _cache.get(result_id)
         except Exception:
             logger.debug("Cache read failed for %s, treating as miss", result_id)
             cached = None
@@ -582,7 +582,7 @@ async def call_endpoint(
                 # Cache results for subsequent paginated/projected access
                 if isinstance(processed, list):
                     try:
-                        await asyncio.to_thread(lambda: _cache.set(result_id, processed, expire=DEFAULT_TTL, tag="endpoint"))
+                        _cache.set(result_id, processed, expire=DEFAULT_TTL, tag="endpoint")
                     except Exception:
                         logger.debug("Cache write failed for %s", result_id)
 
