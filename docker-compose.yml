@@ -1,0 +1,15 @@
+services:
+  mcp-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8778:8778"
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8778/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
