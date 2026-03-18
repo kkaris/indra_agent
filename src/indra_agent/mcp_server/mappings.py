@@ -4,6 +4,8 @@ These constants define how entity types are recognized and filtered during
 grounding and navigation operations in the autoclient gateway tools.
 """
 
+import re
+
 # Entity type mappings from parameter names to canonical types
 # (Aligned with schema_builder pattern from commit a6081263)
 ENTITY_TYPE_MAPPINGS = {
@@ -151,6 +153,76 @@ ORGANISM_TO_TAXONOMY_ID = _build_organism_map()
 MIN_CONFIDENCE_THRESHOLD = 0.5  # Absolute: top score must be >= this
 AMBIGUITY_SCORE_THRESHOLD = 0.3  # Relative: no result in top 5 within this of top
 
+# Parameter type overrides for non-standard parameter names.
+# Used by _normalize_param_to_entity_type for params that don't follow
+# the standard naming convention in ENTITY_TYPE_MAPPINGS.
+_PARAM_TYPE_OVERRIDES = {
+    # Entity-bearing params with non-standard names
+    'nodes': 'BioEntity',
+    'term': 'BioEntity',
+    'parent': 'BioEntity',
+    'phosphosite_list': 'Gene',
+    'metabolites': 'Drug',
+    'agent': 'BioEntity',
+    'other_agent': 'BioEntity',
+    # Non-entity params (explicit None to prevent false positives)
+    'log_fold_change': None,
+    'species': None,
+    'method': None,
+    'alpha': None,
+    'permutations': None,
+    'source': None,
+}
+
+_NUMERIC_SUFFIX_RE = re.compile(r'\d+$')
+
+
+def _normalize_param_to_entity_type(param_name: str):
+    """Resolve a function parameter name to its canonical entity type.
+
+    Resolution order:
+    1. Exact match in _PARAM_TYPE_OVERRIDES
+    2. Exact match in ENTITY_TYPE_MAPPINGS
+    3. Strip numeric suffix (gene1 → gene), retry ENTITY_TYPE_MAPPINGS
+    4. Strip known suffixes (_list, _names, _ids), retry
+    5. Strip known prefixes (positive_, negative_, background_), retry from step 1
+
+    Returns None if unresolved.
+    """
+    # Step 1: Check overrides
+    if param_name in _PARAM_TYPE_OVERRIDES:
+        return _PARAM_TYPE_OVERRIDES[param_name]
+
+    # Step 2: Direct lookup
+    if param_name in ENTITY_TYPE_MAPPINGS:
+        return ENTITY_TYPE_MAPPINGS[param_name]
+
+    # Step 3: Strip numeric suffix (gene1, gene2 → gene)
+    stripped = _NUMERIC_SUFFIX_RE.sub('', param_name)
+    if stripped != param_name and stripped in ENTITY_TYPE_MAPPINGS:
+        return ENTITY_TYPE_MAPPINGS[stripped]
+
+    # Step 4: Strip known suffixes
+    for suffix in ('_list', '_names', '_ids'):
+        if param_name.endswith(suffix):
+            base = param_name[:-len(suffix)]
+            if base in ENTITY_TYPE_MAPPINGS:
+                return ENTITY_TYPE_MAPPINGS[base]
+            # Also try stripping numeric suffix from base
+            base_stripped = _NUMERIC_SUFFIX_RE.sub('', base)
+            if base_stripped != base and base_stripped in ENTITY_TYPE_MAPPINGS:
+                return ENTITY_TYPE_MAPPINGS[base_stripped]
+
+    # Step 5: Strip known prefixes, then retry recursively
+    for prefix in ('positive_', 'negative_', 'background_'):
+        if param_name.startswith(prefix):
+            result = _normalize_param_to_entity_type(param_name[len(prefix):])
+            if result is not None:
+                return result
+
+    return None
+
+
 __all__ = [
     'ENTITY_TYPE_MAPPINGS',
     'CURIE_PREFIX_TO_ENTITY',
@@ -158,4 +230,6 @@ __all__ = [
     'MIN_CONFIDENCE_THRESHOLD',
     'AMBIGUITY_SCORE_THRESHOLD',
     'ORGANISM_TO_TAXONOMY_ID',
+    '_normalize_param_to_entity_type',
+    '_PARAM_TYPE_OVERRIDES',
 ]

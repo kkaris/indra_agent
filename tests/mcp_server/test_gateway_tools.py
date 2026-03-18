@@ -1261,6 +1261,74 @@ class TestSmokeQueries:
 
 
 # ============================================================================
+# Part 8: Parameter Normalization Tests (no Neo4j required)
+# ============================================================================
+
+from indra_agent.mcp_server.mappings import _normalize_param_to_entity_type, _PARAM_TYPE_OVERRIDES
+
+
+@pytest.mark.nonpublic
+class TestParamNormalization:
+    """Unit tests for _normalize_param_to_entity_type (no Neo4j)."""
+
+    def test_direct_entity_type_mapping(self):
+        """Standard param names resolve via ENTITY_TYPE_MAPPINGS."""
+        assert _normalize_param_to_entity_type("gene") == "Gene"
+        assert _normalize_param_to_entity_type("disease") == "Disease"
+        assert _normalize_param_to_entity_type("drug") == "Drug"
+        assert _normalize_param_to_entity_type("pathway") == "Pathway"
+        assert _normalize_param_to_entity_type("genes") == "Gene"
+
+    def test_numeric_suffix_stripping(self):
+        """gene1, gene2 → gene → Gene."""
+        assert _normalize_param_to_entity_type("gene1") == "Gene"
+        assert _normalize_param_to_entity_type("gene2") == "Gene"
+
+    def test_list_suffix_stripping(self):
+        """gene_list → gene → Gene."""
+        assert _normalize_param_to_entity_type("gene_list") == "Gene"
+
+    def test_names_suffix_stripping(self):
+        """gene_names → gene → Gene."""
+        assert _normalize_param_to_entity_type("gene_names") == "Gene"
+
+    def test_prefix_stripping(self):
+        """positive_genes → genes → Gene."""
+        assert _normalize_param_to_entity_type("positive_genes") == "Gene"
+        assert _normalize_param_to_entity_type("negative_genes") == "Gene"
+
+    def test_combined_prefix_and_suffix(self):
+        """background_gene_list → gene_list → gene → Gene."""
+        assert _normalize_param_to_entity_type("background_gene_list") == "Gene"
+
+    def test_override_nodes(self):
+        """nodes → BioEntity (override)."""
+        assert _normalize_param_to_entity_type("nodes") == "BioEntity"
+
+    def test_override_phosphosite_list(self):
+        """phosphosite_list → Gene (override)."""
+        assert _normalize_param_to_entity_type("phosphosite_list") == "Gene"
+
+    def test_override_term_and_parent(self):
+        """Ontology params → BioEntity."""
+        assert _normalize_param_to_entity_type("term") == "BioEntity"
+        assert _normalize_param_to_entity_type("parent") == "BioEntity"
+
+    def test_non_entity_params_return_none(self):
+        """Non-entity params (overridden to None or unrecognized) return None."""
+        assert _normalize_param_to_entity_type("log_fold_change") is None
+        assert _normalize_param_to_entity_type("species") is None
+        assert _normalize_param_to_entity_type("method") is None
+        assert _normalize_param_to_entity_type("alpha") is None
+        assert _normalize_param_to_entity_type("permutations") is None
+        assert _normalize_param_to_entity_type("source") is None
+
+    def test_unknown_params_return_none(self):
+        """Completely unknown param names return None."""
+        assert _normalize_param_to_entity_type("foobar") is None
+        assert _normalize_param_to_entity_type("xyz_widget") is None
+
+# ============================================================================
 # Summary
 # ============================================================================
 
