@@ -31,7 +31,7 @@ from indra_agent.mcp_server.mappings import (
     AMBIGUITY_SCORE_THRESHOLD,
     ORGANISM_TO_TAXONOMY_ID,
 )
-from indra_agent.mcp_server.registry import _get_registry, clear_registry_cache
+from indra_agent.mcp_server.registry import _get_registry, _get_capability_index, clear_registry_cache
 from indra_agent.mcp_server.serialization import process_result, resolve_entity_names
 from indra_agent.mcp_server.pagination import paginate_response, estimate_tokens
 
@@ -244,7 +244,7 @@ def suggest_endpoints(
         if source_nav["can_reach"]:
             navigation.append(source_nav)
 
-    return {
+    response = {
         "source_entities": list(source_types),
         "navigation_options": navigation,
         "total_sources": len(source_types),
@@ -252,6 +252,42 @@ def suggest_endpoints(
         "hint": "Use call_endpoint with one of the suggested functions. "
                 "Pass entity as [namespace, id] tuple, e.g., gene=[\"HGNC\", \"6407\"]",
     }
+
+    # Query capability index for non-traversal functions matching detected types
+    cap_index = _get_capability_index()
+    if cap_index:
+        capabilities = []
+        seen = set()
+
+        # Collect entity types to query: detected types + BioEntity (accepts any)
+        query_types = sorted(source_types)
+        if "BioEntity" not in query_types:
+            query_types.append("BioEntity")
+
+        for etype in query_types:
+            if etype not in cap_index:
+                continue
+            for category, entries in sorted(cap_index[etype].items()):
+                for entry in entries:
+                    if entry["name"] in seen:
+                        continue
+                    # Apply intent filtering (keyword match on name + description)
+                    if intent:
+                        intent_lower = intent.lower()
+                        text = entry["name"].lower() + " " + entry["description"].lower()
+                        if not any(kw in text for kw in intent_lower.split()):
+                            continue
+                    capabilities.append({
+                        "function": entry["name"],
+                        "category": category,
+                        "description": entry["description"],
+                    })
+                    seen.add(entry["name"])
+
+        if capabilities:
+            response["capabilities"] = capabilities
+
+    return response
 
 
 async def call_endpoint(
@@ -1250,6 +1286,32 @@ def get_navigation_schema(
                 "to": target,
                 "functions": list(functions),
             })
+
+    # Add capabilities section for non-traversal functions
+    cap_index = _get_capability_index()
+    if cap_index:
+        if entity_type:
+            # Merge entity_type-specific + BioEntity capabilities
+            cap_section: Dict[str, List] = {}
+            for etype in [entity_type, "BioEntity"]:
+                if etype not in cap_index:
+                    continue
+                for cat, entries in cap_index[etype].items():
+                    cap_section.setdefault(cat, []).extend(entries)
+        else:
+            cap_section = cap_index.get("_all", {})
+
+        if cap_section:
+            # Deduplicate entries that appear under multiple entity types
+            schema["capabilities"] = {}
+            for cat, entries in sorted(cap_section.items()):
+                seen = set()
+                deduped = []
+                for e in entries:
+                    if e["name"] not in seen:
+                        deduped.append({"name": e["name"], "description": e["description"]})
+                        seen.add(e["name"])
+                schema["capabilities"][cat] = deduped
 
     return schema
 

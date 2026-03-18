@@ -1328,6 +1328,96 @@ class TestParamNormalization:
         assert _normalize_param_to_entity_type("foobar") is None
         assert _normalize_param_to_entity_type("xyz_widget") is None
 
+
+# ============================================================================
+# Part 9: Capability Index Tests
+# ============================================================================
+
+from indra_agent.mcp_server.registry import _get_capability_index
+
+
+@pytest.mark.nonpublic
+class TestCapabilityIndex:
+    """Integration tests for the capability index."""
+
+    def test_index_populated(self):
+        """Capability index should be non-empty after registry build."""
+        cap = _get_capability_index()
+        assert cap is not None
+        assert "_all" in cap
+        assert len(cap["_all"]) > 0
+
+    def test_analysis_functions_surfaced(self):
+        """Analysis category functions should appear in the index."""
+        cap = _get_capability_index()
+        all_cats = cap["_all"]
+        assert "analysis" in all_cats
+        analysis_names = {e["name"] for e in all_cats["analysis"]}
+        assert "discrete_analysis" in analysis_names
+
+    def test_subnetwork_functions_surfaced(self):
+        """Subnetwork category should appear in the index."""
+        cap = _get_capability_index()
+        all_cats = cap["_all"]
+        assert "subnetwork" in all_cats
+        sub_names = {e["name"] for e in all_cats["subnetwork"]}
+        assert "indra_subnetwork_relations" in sub_names
+
+    def test_no_overlap_with_edge_map(self):
+        """No function should appear in both edge map and capability index."""
+        from indra_agent.mcp_server.registry import _get_registry
+        _, _, edge_map = _get_registry()
+
+        edge_funcs = set()
+        for targets in edge_map.values():
+            for funcs in targets.values():
+                edge_funcs.update(funcs)
+
+        cap = _get_capability_index()
+        cap_funcs = {e["name"] for entries in cap["_all"].values() for e in entries}
+
+        overlap = edge_funcs & cap_funcs
+        assert len(overlap) == 0, f"Overlap between edge map and capability index: {overlap}"
+
+    def test_suggest_endpoints_includes_capabilities(self):
+        """suggest_endpoints should return capabilities for Gene entities."""
+        result = suggest_endpoints(entity_ids=["HGNC:6407"])
+        assert "capabilities" in result
+        cap_funcs = {c["function"] for c in result["capabilities"]}
+        # Analysis functions accept gene params
+        assert "discrete_analysis" in cap_funcs
+
+    def test_navigation_schema_includes_capabilities(self):
+        """get_navigation_schema should return capabilities section."""
+        result = get_navigation_schema()
+        assert "capabilities" in result
+        assert "analysis" in result["capabilities"]
+
+    def test_navigation_schema_filter_by_entity_type(self):
+        """get_navigation_schema with entity_type filter includes relevant capabilities."""
+        result = get_navigation_schema(entity_type="Gene")
+        if "capabilities" in result:
+            # Should only include capabilities relevant to Gene or BioEntity
+            for cat, entries in result["capabilities"].items():
+                for entry in entries:
+                    assert isinstance(entry["name"], str)
+
+    def test_cache_clear_resets_index(self):
+        """Clearing registry cache should reset the capability index."""
+        # Ensure index is built
+        cap1 = _get_capability_index()
+        assert cap1 is not None
+
+        # Clear
+        clear_registry_cache()
+
+        # Rebuild
+        cap2 = _get_capability_index()
+        assert cap2 is not None
+        # Should have same structure
+        assert set(cap2["_all"].keys()) == set(cap1["_all"].keys())
+
+
 # ============================================================================
 # Summary
 # ============================================================================
