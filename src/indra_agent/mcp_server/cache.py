@@ -26,10 +26,40 @@ import hashlib
 import json
 import logging
 import os
+import sqlite3
 import stat
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# SQLite cross-thread safety patch
+# ---------------------------------------------------------------------------
+# Third-party libraries (GILDA's SqliteEntries, INDRA's SqliteOntology) store
+# SQLite connections as plain instance attributes — NOT thread-local.  When
+# asyncio.to_thread() dispatches work to different thread-pool workers, those
+# connections are accessed from a thread other than the one that created them,
+# raising: "SQLite objects created in a thread can only be used in that same
+# thread."
+#
+# Setting check_same_thread=False disables the Python-level thread check.
+# This is safe here because:
+#   1. The affected libraries only SELECT (read-only).
+#   2. SQLite itself is compiled with SQLITE_THREADSAFE=1 (serialized mode)
+#      on all standard distributions, so the C layer handles concurrent access.
+#
+# Applied once at import time — before diskcache or any other module creates
+# SQLite connections.
+# ---------------------------------------------------------------------------
+_original_sqlite3_connect = sqlite3.connect
+
+
+def _sqlite3_connect_thread_safe(*args, **kwargs):
+    kwargs.setdefault("check_same_thread", False)
+    return _original_sqlite3_connect(*args, **kwargs)
+
+
+sqlite3.connect = _sqlite3_connect_thread_safe
 
 
 # ---------------------------------------------------------------------------

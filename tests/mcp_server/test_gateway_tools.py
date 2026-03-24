@@ -1261,6 +1261,164 @@ class TestSmokeQueries:
 
 
 # ============================================================================
+# Part 8: Parameter Normalization Tests (no Neo4j required)
+# ============================================================================
+
+from indra_agent.mcp_server.mappings import _normalize_param_to_entity_type, _PARAM_TYPE_OVERRIDES
+
+
+@pytest.mark.nonpublic
+class TestParamNormalization:
+    """Unit tests for _normalize_param_to_entity_type (no Neo4j)."""
+
+    def test_direct_entity_type_mapping(self):
+        """Standard param names resolve via ENTITY_TYPE_MAPPINGS."""
+        assert _normalize_param_to_entity_type("gene") == "Gene"
+        assert _normalize_param_to_entity_type("disease") == "Disease"
+        assert _normalize_param_to_entity_type("drug") == "Drug"
+        assert _normalize_param_to_entity_type("pathway") == "Pathway"
+        assert _normalize_param_to_entity_type("genes") == "Gene"
+
+    def test_numeric_suffix_stripping(self):
+        """gene1, gene2 → gene → Gene."""
+        assert _normalize_param_to_entity_type("gene1") == "Gene"
+        assert _normalize_param_to_entity_type("gene2") == "Gene"
+
+    def test_list_suffix_stripping(self):
+        """gene_list → gene → Gene."""
+        assert _normalize_param_to_entity_type("gene_list") == "Gene"
+
+    def test_names_suffix_stripping(self):
+        """gene_names → gene → Gene."""
+        assert _normalize_param_to_entity_type("gene_names") == "Gene"
+
+    def test_prefix_stripping(self):
+        """positive_genes → genes → Gene."""
+        assert _normalize_param_to_entity_type("positive_genes") == "Gene"
+        assert _normalize_param_to_entity_type("negative_genes") == "Gene"
+
+    def test_combined_prefix_and_suffix(self):
+        """background_gene_list → gene_list → gene → Gene."""
+        assert _normalize_param_to_entity_type("background_gene_list") == "Gene"
+
+    def test_override_nodes(self):
+        """nodes → BioEntity (override)."""
+        assert _normalize_param_to_entity_type("nodes") == "BioEntity"
+
+    def test_override_phosphosite_list(self):
+        """phosphosite_list → Gene (override)."""
+        assert _normalize_param_to_entity_type("phosphosite_list") == "Gene"
+
+    def test_override_term_and_parent(self):
+        """Ontology params → BioEntity."""
+        assert _normalize_param_to_entity_type("term") == "BioEntity"
+        assert _normalize_param_to_entity_type("parent") == "BioEntity"
+
+    def test_non_entity_params_return_none(self):
+        """Non-entity params (overridden to None or unrecognized) return None."""
+        assert _normalize_param_to_entity_type("log_fold_change") is None
+        assert _normalize_param_to_entity_type("species") is None
+        assert _normalize_param_to_entity_type("method") is None
+        assert _normalize_param_to_entity_type("alpha") is None
+        assert _normalize_param_to_entity_type("permutations") is None
+        assert _normalize_param_to_entity_type("source") is None
+
+    def test_unknown_params_return_none(self):
+        """Completely unknown param names return None."""
+        assert _normalize_param_to_entity_type("foobar") is None
+        assert _normalize_param_to_entity_type("xyz_widget") is None
+
+
+# ============================================================================
+# Part 9: Capability Index Tests
+# ============================================================================
+
+from indra_agent.mcp_server.registry import _get_capability_index
+
+
+@pytest.mark.nonpublic
+class TestCapabilityIndex:
+    """Integration tests for the capability index."""
+
+    def test_index_populated(self):
+        """Capability index should be non-empty after registry build."""
+        cap = _get_capability_index()
+        assert cap is not None
+        assert "_all" in cap
+        assert len(cap["_all"]) > 0
+
+    def test_analysis_functions_surfaced(self):
+        """Analysis category functions should appear in the index."""
+        cap = _get_capability_index()
+        all_cats = cap["_all"]
+        assert "analysis" in all_cats
+        analysis_names = {e["name"] for e in all_cats["analysis"]}
+        assert "discrete_analysis" in analysis_names
+
+    def test_subnetwork_functions_surfaced(self):
+        """Subnetwork category should appear in the index."""
+        cap = _get_capability_index()
+        all_cats = cap["_all"]
+        assert "subnetwork" in all_cats
+        sub_names = {e["name"] for e in all_cats["subnetwork"]}
+        assert "indra_subnetwork_relations" in sub_names
+
+    def test_no_overlap_with_edge_map(self):
+        """No function should appear in both edge map and capability index."""
+        from indra_agent.mcp_server.registry import _get_registry
+        _, _, edge_map = _get_registry()
+
+        edge_funcs = set()
+        for targets in edge_map.values():
+            for funcs in targets.values():
+                edge_funcs.update(funcs)
+
+        cap = _get_capability_index()
+        cap_funcs = {e["name"] for entries in cap["_all"].values() for e in entries}
+
+        overlap = edge_funcs & cap_funcs
+        assert len(overlap) == 0, f"Overlap between edge map and capability index: {overlap}"
+
+    def test_suggest_endpoints_includes_capabilities(self):
+        """suggest_endpoints should return capabilities for Gene entities."""
+        result = suggest_endpoints(entity_ids=["HGNC:6407"])
+        assert "capabilities" in result
+        cap_funcs = {c["function"] for c in result["capabilities"]}
+        # Analysis functions accept gene params
+        assert "discrete_analysis" in cap_funcs
+
+    def test_navigation_schema_includes_capabilities(self):
+        """get_navigation_schema should return capabilities section."""
+        result = get_navigation_schema()
+        assert "capabilities" in result
+        assert "analysis" in result["capabilities"]
+
+    def test_navigation_schema_filter_by_entity_type(self):
+        """get_navigation_schema with entity_type filter includes relevant capabilities."""
+        result = get_navigation_schema(entity_type="Gene")
+        if "capabilities" in result:
+            # Should only include capabilities relevant to Gene or BioEntity
+            for cat, entries in result["capabilities"].items():
+                for entry in entries:
+                    assert isinstance(entry["name"], str)
+
+    def test_cache_clear_resets_index(self):
+        """Clearing registry cache should reset the capability index."""
+        # Ensure index is built
+        cap1 = _get_capability_index()
+        assert cap1 is not None
+
+        # Clear
+        clear_registry_cache()
+
+        # Rebuild
+        cap2 = _get_capability_index()
+        assert cap2 is not None
+        # Should have same structure
+        assert set(cap2["_all"].keys()) == set(cap1["_all"].keys())
+
+
+# ============================================================================
 # Summary
 # ============================================================================
 

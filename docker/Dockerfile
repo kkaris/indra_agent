@@ -19,21 +19,25 @@ RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir git+https://github.com/gyorilab/indra_agent.git
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Setup resources
-RUN python -m protmapper.resources && \
-    python -m indra.ontology.bio build && \
-    python -c "from indra.ontology.bio.sqlite_ontology import build_sqlite_ontology; build_sqlite_ontology()" && \
-    python -m adeft.download && \
-    python -m gilda.resources && \
-    python -m gilda.resources.sqlite_adapter
+# Copy local source and install
+COPY . /tmp/indra_agent
+RUN pip install --no-cache-dir /tmp/indra_agent && \
+    rm -rf /tmp/indra_agent
+
+# Copy pre-built resources (built by docker/prebuild.sh to avoid OOM).
+# The INDRA ontology build requires ~8 GB RAM — more than Docker Desktop
+# typically allows on 16 GB machines.
+COPY docker/resources/protmapper/ /root/.data/protmapper/
+COPY docker/resources/indra_ontology/ /root/.indra/bio_ontology/
+COPY docker/resources/adeft/ /root/.local/share/adeft/
+COPY docker/resources/gilda/ /root/.data/gilda/
 
 RUN mkdir /app
 WORKDIR /app
 
-COPY startup.sh /app/startup.sh
+COPY docker/startup.sh /app/startup.sh
 RUN chmod +x /app/startup.sh
 
 # Run the MCP server

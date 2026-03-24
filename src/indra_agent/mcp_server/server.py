@@ -237,7 +237,7 @@ async def get_graph_schema_tool(params: GetGraphSchemaInput) -> str:
 
     # Check cache first
     try:
-        cached = await asyncio.to_thread(_cache.get, cache_key)
+        cached = _cache.get(cache_key)
     except Exception:
         cached = None
 
@@ -260,9 +260,7 @@ async def get_graph_schema_tool(params: GetGraphSchemaInput) -> str:
 
         # Cache the result with long TTL
         try:
-            await asyncio.to_thread(
-                lambda: _cache.set(cache_key, result, expire=_SCHEMA_TTL, tag="schema")
-            )
+            _cache.set(cache_key, result, expire=_SCHEMA_TTL, tag="schema")
         except Exception:
             logger.debug("Schema cache write failed for %s", cache_key)
 

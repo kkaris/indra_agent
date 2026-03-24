@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from indra_agent.mcp_server.mappings import ENTITY_TYPE_MAPPINGS
+from indra_agent.mcp_server.mappings import ENTITY_TYPE_MAPPINGS, _normalize_param_to_entity_type
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 _FUNCTION_REGISTRY: Optional[Dict[str, Any]] = None
 _FUNC_MAPPING: Optional[Dict[str, Callable]] = None
 _EDGE_MAP: Optional[Dict[str, Dict[str, List[str]]]] = None  # source → target → [functions]
+_CAPABILITY_INDEX: Optional[Dict[str, Any]] = None  # entity_type → category → [entries]
 
 # Cache metadata for diagnostics and staleness detection
 _CACHE_VERSION: int = 0
@@ -81,11 +82,12 @@ def _validate_cached_registry() -> bool:
 
 def _clear_registry_internal():
     """Internal function to clear registry cache (assumes lock is held)."""
-    global _FUNCTION_REGISTRY, _FUNC_MAPPING, _EDGE_MAP
+    global _FUNCTION_REGISTRY, _FUNC_MAPPING, _EDGE_MAP, _CAPABILITY_INDEX
 
     _FUNCTION_REGISTRY = None
     _FUNC_MAPPING = None
     _EDGE_MAP = None
+    _CAPABILITY_INDEX = None
     logger.debug("Registry cache cleared (internal)")
 
 
@@ -139,7 +141,7 @@ def get_registry_status() -> Dict[str, Any]:
         Dict with cached, version, initialized_at, age_seconds, metrics,
         validation, and status fields
     """
-    global _FUNCTION_REGISTRY, _FUNC_MAPPING, _EDGE_MAP, _CACHE_VERSION, _CACHE_INITIALIZED_AT
+    global _FUNCTION_REGISTRY, _FUNC_MAPPING, _EDGE_MAP, _CAPABILITY_INDEX, _CACHE_VERSION, _CACHE_INITIALIZED_AT
 
     with _cache_lock:
         is_cached = _FUNCTION_REGISTRY is not None
@@ -155,6 +157,9 @@ def get_registry_status() -> Dict[str, Any]:
         num_functions = len(_FUNCTION_REGISTRY) if _FUNCTION_REGISTRY else 0
         num_mappings = len(_FUNC_MAPPING) if _FUNC_MAPPING else 0
         num_edges = sum(len(targets) for targets in _EDGE_MAP.values()) if _EDGE_MAP else 0
+        num_capabilities = 0
+        if _CAPABILITY_INDEX and "_all" in _CAPABILITY_INDEX:
+            num_capabilities = sum(len(entries) for entries in _CAPABILITY_INDEX["_all"].values())
 
         # Sample function validation
         sample_valid = True
@@ -185,6 +190,7 @@ def get_registry_status() -> Dict[str, Any]:
                 "registry_functions": num_functions,
                 "func_mapping_entries": num_mappings,
                 "navigation_edges": num_edges,
+                "capability_entries": num_capabilities,
             },
             "validation": {
                 "sample_check_passed": sample_valid,
@@ -199,7 +205,7 @@ def _get_registry():
 
     Thread-safe lazy initialization with cache validation.
     """
-    global _FUNCTION_REGISTRY, _FUNC_MAPPING, _EDGE_MAP, _CACHE_VERSION, _CACHE_INITIALIZED_AT
+    global _FUNCTION_REGISTRY, _FUNC_MAPPING, _EDGE_MAP, _CAPABILITY_INDEX, _CACHE_VERSION, _CACHE_INITIALIZED_AT
 
     with _cache_lock:
         # Validate cache before returning
@@ -250,12 +256,17 @@ def _get_registry():
         # Build edge map from function naming patterns
         _EDGE_MAP = _build_edge_map(_FUNCTION_REGISTRY)
 
+        # Build capability index for functions not in edge map
+        _CAPABILITY_INDEX = _build_capability_index(_FUNCTION_REGISTRY, _EDGE_MAP)
+
         # Update cache metadata
         _CACHE_VERSION += 1
         _CACHE_INITIALIZED_AT = datetime.now()
 
+        num_cap = sum(len(e) for e in _CAPABILITY_INDEX.get("_all", {}).values())
         logger.info(f"Built function registry v{_CACHE_VERSION} with {len(_FUNCTION_REGISTRY)} functions, "
-                    f"{sum(len(targets) for targets in _EDGE_MAP.values())} navigation edges")
+                    f"{sum(len(targets) for targets in _EDGE_MAP.values())} navigation edges, "
+                    f"{num_cap} capability entries")
         return _FUNCTION_REGISTRY, _FUNC_MAPPING, _EDGE_MAP
 
 
@@ -326,8 +337,78 @@ def _build_edge_map(registry: Dict[str, Any]) -> Dict[str, Dict[str, List[str]]]
     return {source: dict(targets) for source, targets in edge_map.items()}
 
 
+def _build_capability_index(
+    registry: Dict[str, Any],
+    edge_map: Dict[str, Dict[str, List[str]]],
+) -> Dict[str, Any]:
+    """Build capability index for functions not covered by the edge map.
+
+    Groups functions by the entity types their parameters accept,
+    making them discoverable through suggest_endpoints and
+    get_navigation_schema even though they don't follow the
+    ``get_X_for_Y`` naming convention.
+
+    Returns
+    -------
+    :
+        ``{entity_type: {category: [entries]}, "_all": {category: [entries]}}``
+        where each entry is ``{"name", "description", "entity_types"}``.
+    """
+    # Collect all functions already in the edge map
+    edge_funcs: set = set()
+    for targets in edge_map.values():
+        for funcs in targets.values():
+            edge_funcs.update(funcs)
+
+    # Build index
+    by_entity: Dict[str, Dict[str, List[Dict]]] = defaultdict(lambda: defaultdict(list))
+    all_by_cat: Dict[str, List[Dict]] = defaultdict(list)
+
+    for func_name, metadata in registry.items():
+        if func_name in edge_funcs:
+            continue
+
+        # metadata: [name, short_desc, full_doc, category, cat_desc, module, params, ...]
+        short_desc = metadata[1] if len(metadata) > 1 else ""
+        category = metadata[3] if len(metadata) > 3 else "uncategorized"
+        params = metadata[6] if len(metadata) > 6 else {}
+
+        # Resolve parameter names → entity types
+        entity_types: set = set()
+        for param_name in params:
+            etype = _normalize_param_to_entity_type(param_name)
+            if etype is not None:
+                entity_types.add(etype)
+
+        entry = {
+            "name": func_name,
+            "description": short_desc,
+            "entity_types": sorted(entity_types),
+        }
+
+        for etype in entity_types:
+            by_entity[etype][category].append(entry)
+
+        all_by_cat[category].append(entry)
+
+    result = {etype: dict(cats) for etype, cats in by_entity.items()}
+    result["_all"] = dict(all_by_cat)
+    return result
+
+
+def _get_capability_index() -> Optional[Dict[str, Any]]:
+    """Return the capability index, building the registry if needed."""
+    global _CAPABILITY_INDEX
+
+    with _cache_lock:
+        if _CAPABILITY_INDEX is None:
+            _get_registry()  # triggers build
+        return _CAPABILITY_INDEX
+
+
 __all__ = [
     "invalidate_cache",
     "clear_registry_cache",
     "get_registry_status",
+    "_get_capability_index",
 ]
