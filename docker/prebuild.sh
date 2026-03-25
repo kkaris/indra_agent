@@ -58,18 +58,21 @@ else
     cp -a "$HOME/.data/protmapper/$PROTMAPPER_VERSION/"* "$PROTMAPPER_DST/"
 fi
 
-# --- INDRA bio ontology (the big one: ~470 MB pickle, ~8 GB RAM to build) ---
+# --- INDRA bio ontology (the big one: ~470 MB pickle, ~8 GB RAM to build) + SQLite DB ---
 ONTOLOGY_SRC="$HOME/.indra/bio_ontology/$INDRA_ONT_VERSION/bio_ontology.pkl"
+ONTOLOGY_SQLITE_SRC="$HOME/.indra/bio_ontology/$INDRA_ONT_VERSION/bio_ontology.db"
 ONTOLOGY_DST="$RESOURCES_DIR/indra_ontology/$INDRA_ONT_VERSION"
-if [ -f "$ONTOLOGY_SRC" ]; then
+if [ -f "$ONTOLOGY_SRC" ] && [ -f "$ONTOLOGY_SQLITE_SRC" ]; then
     echo "Copying INDRA bio ontology from cache (470 MB)..."
     mkdir -p "$ONTOLOGY_DST"
     cp "$ONTOLOGY_SRC" "$ONTOLOGY_DST/bio_ontology.pkl"
+    cp "$ONTOLOGY_SQLITE_SRC" "$ONTOLOGY_DST/bio_ontology.db"
 else
     echo "Building INDRA bio ontology (requires ~8 GB RAM, takes ~45 min)..."
     $PYTHON -m indra.ontology.bio build
     mkdir -p "$ONTOLOGY_DST"
     cp "$HOME/.indra/bio_ontology/$INDRA_ONT_VERSION/bio_ontology.pkl" "$ONTOLOGY_DST/bio_ontology.pkl"
+    cp "$HOME/.indra/bio_ontology/$INDRA_ONT_VERSION/bio_ontology.db" "$ONTOLOGY_DST/bio_ontology.db"
 fi
 
 # --- adeft models ---
@@ -87,7 +90,7 @@ else
     cp -a "$ADEFT_SRC/"* "$ADEFT_DST/"
 fi
 
-# --- gilda grounding terms + SQLite DB ---
+# --- gilda grounding terms + Gilda SQLite DB ---
 GILDA_SRC="$HOME/.data/gilda/$GILDA_VERSION"
 GILDA_DST="$RESOURCES_DIR/gilda/$GILDA_VERSION"
 mkdir -p "$GILDA_DST"
@@ -102,7 +105,7 @@ else
     cp -a "$HOME/.data/gilda/$GILDA_VERSION/"* "$GILDA_DST/"
 fi
 
-# Build SQLite DB if missing
+# Build Gilda SQLite DB if missing
 if [ ! -f "$GILDA_DST/grounding_terms.db" ]; then
     echo "Building gilda SQLite database..."
     $PYTHON -m gilda.resources.sqlite_adapter
