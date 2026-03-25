@@ -73,7 +73,7 @@ if [ -f "$ONTOLOGY_SRC" ] && [ -f "$ONTOLOGY_SQLITE_SRC" ]; then
     cp "$ONTOLOGY_SQLITE_SRC" "$ONTOLOGY_DST/bio_ontology.db"
 else
     echo "Building INDRA bio ontology (requires ~8 GB RAM, takes ~45 min)..."
-    $PYTHON -m indra.ontology.bio build
+    $PYTHON -c "from indra.ontology.bio.sqlite_ontology import build_sqlite_ontology; build_sqlite_ontology()"
     mkdir -p "$ONTOLOGY_DST"
     cp "$ONTOLOGY_LOCAL/bio_ontology.pkl" "$ONTOLOGY_DST/bio_ontology.pkl"
     cp "$ONTOLOGY_LOCAL/bio_ontology.db" "$ONTOLOGY_DST/bio_ontology.db"
