@@ -38,14 +38,18 @@ GILDA_VERSION=$($PYTHON -c "import gilda; print(gilda.__version__)")
 ADEFT_VERSION=$($PYTHON -c "import adeft; print(adeft.__version__)")
 # adeft uses appdirs.user_data_dir() — platform-dependent
 ADEFT_LOCAL=$($PYTHON -c "from adeft.locations import ADEFT_HOME; print(ADEFT_HOME)")
+ONTOLOGY_LOCAL=$($PYTHON -c "from indra.ontology.bio.ontology import CACHE_DIR; print(CACHE_DIR)")
+GILDA_LOCAL=$($PYTHON -c "from gilda.resources import resource_dir; print(resource_dir)")
 
 echo "Versions: protmapper=$PROTMAPPER_VERSION, indra_ontology=$INDRA_ONT_VERSION, gilda=$GILDA_VERSION, adeft=$ADEFT_VERSION"
 echo "Adeft local path: $ADEFT_LOCAL"
+echo "INDRA ontology local path: $ONTOLOGY_LOCAL"
+echo "Gilda local path: $GILDA_LOCAL"
 
 mkdir -p "$RESOURCES_DIR"
 
 # --- protmapper resources ---
-PROTMAPPER_SRC="$HOME/.data/protmapper/$PROTMAPPER_VERSION"
+PROTMAPPER_SRC=$($PYTHON -c "from protmapper.resources import resource_dir; print(resource_dir)")
 PROTMAPPER_DST="$RESOURCES_DIR/protmapper/$PROTMAPPER_VERSION"
 if [ -d "$PROTMAPPER_SRC" ] && [ "$(ls -A "$PROTMAPPER_SRC")" ]; then
     echo "Copying protmapper resources from cache..."
@@ -58,18 +62,21 @@ else
     cp -a "$HOME/.data/protmapper/$PROTMAPPER_VERSION/"* "$PROTMAPPER_DST/"
 fi
 
-# --- INDRA bio ontology (the big one: ~470 MB pickle, ~8 GB RAM to build) ---
-ONTOLOGY_SRC="$HOME/.indra/bio_ontology/$INDRA_ONT_VERSION/bio_ontology.pkl"
+# --- INDRA bio ontology (the big one: ~470 MB pickle, ~8 GB RAM to build) + SQLite DB ---
+ONTOLOGY_SRC="$ONTOLOGY_LOCAL/bio_ontology.pkl"
+ONTOLOGY_SQLITE_SRC="$ONTOLOGY_LOCAL/bio_ontology.db"
 ONTOLOGY_DST="$RESOURCES_DIR/indra_ontology/$INDRA_ONT_VERSION"
-if [ -f "$ONTOLOGY_SRC" ]; then
+if [ -f "$ONTOLOGY_SRC" ] && [ -f "$ONTOLOGY_SQLITE_SRC" ]; then
     echo "Copying INDRA bio ontology from cache (470 MB)..."
     mkdir -p "$ONTOLOGY_DST"
     cp "$ONTOLOGY_SRC" "$ONTOLOGY_DST/bio_ontology.pkl"
+    cp "$ONTOLOGY_SQLITE_SRC" "$ONTOLOGY_DST/bio_ontology.db"
 else
     echo "Building INDRA bio ontology (requires ~8 GB RAM, takes ~45 min)..."
-    $PYTHON -m indra.ontology.bio build
+    $PYTHON -c "from indra.ontology.bio.sqlite_ontology import build_sqlite_ontology; build_sqlite_ontology()"
     mkdir -p "$ONTOLOGY_DST"
-    cp "$HOME/.indra/bio_ontology/$INDRA_ONT_VERSION/bio_ontology.pkl" "$ONTOLOGY_DST/bio_ontology.pkl"
+    cp "$ONTOLOGY_LOCAL/bio_ontology.pkl" "$ONTOLOGY_DST/bio_ontology.pkl"
+    cp "$ONTOLOGY_LOCAL/bio_ontology.db" "$ONTOLOGY_DST/bio_ontology.db"
 fi
 
 # --- adeft models ---
@@ -87,26 +94,25 @@ else
     cp -a "$ADEFT_SRC/"* "$ADEFT_DST/"
 fi
 
-# --- gilda grounding terms + SQLite DB ---
-GILDA_SRC="$HOME/.data/gilda/$GILDA_VERSION"
+# --- gilda grounding terms + Gilda SQLite DB ---
 GILDA_DST="$RESOURCES_DIR/gilda/$GILDA_VERSION"
 mkdir -p "$GILDA_DST"
 
 # Download terms + models if not cached
-if [ -f "$GILDA_SRC/grounding_terms.tsv.gz" ]; then
+if [ -f "$GILDA_LOCAL/grounding_terms.tsv.gz" ]; then
     echo "Copying gilda resources from cache..."
-    cp -a "$GILDA_SRC/"* "$GILDA_DST/"
+    cp -a "$GILDA_LOCAL/"* "$GILDA_DST/"
 else
     echo "Downloading gilda resources..."
     $PYTHON -m gilda.resources
-    cp -a "$HOME/.data/gilda/$GILDA_VERSION/"* "$GILDA_DST/"
+    cp -a "$GILDA_LOCAL/"* "$GILDA_DST/"
 fi
 
-# Build SQLite DB if missing
+# Build Gilda SQLite DB if missing
 if [ ! -f "$GILDA_DST/grounding_terms.db" ]; then
     echo "Building gilda SQLite database..."
     $PYTHON -m gilda.resources.sqlite_adapter
-    cp "$HOME/.data/gilda/$GILDA_VERSION/grounding_terms.db" "$GILDA_DST/grounding_terms.db"
+    cp "$GILDA_LOCAL/grounding_terms.db" "$GILDA_DST/grounding_terms.db"
 fi
 
 echo ""
